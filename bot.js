@@ -1,9 +1,8 @@
-Да, бро, вот полный актуальный `bot.js`:
-
-```js
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const managerUsername = process.env.MANAGER_USERNAME || '@iosx_support_bot';
-const paymentUrl = process.env.PAYMENT_URL || '';
+const providerToken = process.env.TELEGRAM_PROVIDER_TOKEN || '';
+const priceRub = 299;
+const priceKopecks = priceRub * 100;
 
 if (!token) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -17,7 +16,6 @@ const BUTTONS = {
   langEn: '🇬🇧 English',
   langZh: '🇨🇳 中文',
   pay: '💳 Оплатить 299 ₽',
-  paid: '✅ Я оплатил',
   profile: '👤 Профиль',
   help: '💬 Помощь',
   yes: 'Да',
@@ -53,7 +51,6 @@ function mainKeyboard() {
     resize_keyboard: true,
     keyboard: [
       [BUTTONS.pay],
-      [BUTTONS.paid],
       [BUTTONS.profile, BUTTONS.help],
     ],
   };
@@ -167,11 +164,22 @@ function finishChecklist(chatId) {
   );
 }
 
+function sendInvoice(chatId) {
+  return telegram('sendInvoice', {
+    chat_id: chatId,
+    title: 'IOSx beta',
+    description: 'Настройка Android-устройства',
+    payload: `iosx-beta-${chatId}-${Date.now()}`,
+    provider_token: providerToken,
+    currency: 'RUB',
+    prices: [{ label: 'IOSx beta', amount: priceKopecks }],
+    start_parameter: 'iosx_beta',
+  });
+}
+
 function showPayment(chatId) {
-  if (paymentUrl) {
-    return sendMessage(chatId, 'Beta-тариф: 299 ₽', {
-      inline_keyboard: [[{ text: 'Оплатить 299 ₽', url: paymentUrl }]],
-    });
+  if (providerToken) {
+    return sendInvoice(chatId);
   }
 
   return sendMessage(
@@ -179,7 +187,7 @@ function showPayment(chatId) {
     [
       'Beta-тариф: 299 ₽',
       '',
-      'Ссылка на оплату пока не подключена.',
+      'Оплата в Telegram пока не подключена.',
       `Для оплаты напишите менеджеру: ${managerUsername}`,
     ].join('\n')
   );
@@ -204,7 +212,7 @@ function showHelp(chatId) {
       'Оплата подтверждает заявку. После оплаты бот сразу запускает проверку перед сбросом.',
       '',
       '5. Что если я уже оплатил?',
-      'Нажмите “✅ Я оплатил”, и бот запустит проверку.',
+      'После успешной оплаты бот сам запустит проверку. Если этого не произошло, напишите менеджеру.',
       '',
       '6. Нужно ли знать пароль от Google-аккаунта?',
       'Да. Если пароль не помните, сброс делать нельзя — сначала восстановите доступ.',
@@ -237,9 +245,21 @@ async function showPaidNextStep(chatId) {
   await startChecklist(chatId);
 }
 
+function answerPreCheckoutQuery(preCheckoutQueryId) {
+  return telegram('answerPreCheckoutQuery', {
+    pre_checkout_query_id: preCheckoutQueryId,
+    ok: true,
+  });
+}
+
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const text = message.text || '';
+
+  if (message.successful_payment) {
+    await showPaidNextStep(chatId);
+    return;
+  }
 
   if (text === '/start') {
     await chooseLanguage(chatId);
@@ -286,11 +306,6 @@ async function handleMessage(message) {
     return;
   }
 
-  if (text === BUTTONS.paid) {
-    await showPaidNextStep(chatId);
-    return;
-  }
-
   if (text === BUTTONS.profile) {
     await sendMessage(chatId, `Ваш Telegram ID: ${chatId}`);
     return;
@@ -304,6 +319,17 @@ async function handleMessage(message) {
   await sendMessage(chatId, 'Выберите действие в меню.', mainKeyboard());
 }
 
+async function handleUpdate(update) {
+  if (update.pre_checkout_query) {
+    await answerPreCheckoutQuery(update.pre_checkout_query.id);
+    return;
+  }
+
+  if (update.message) {
+    await handleMessage(update.message);
+  }
+}
+
 async function poll() {
   let offset = 0;
   console.log('IOSx bot is running');
@@ -313,14 +339,12 @@ async function poll() {
       const updates = await telegram('getUpdates', {
         offset,
         timeout: 30,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'pre_checkout_query'],
       });
 
       for (const update of updates) {
         offset = update.update_id + 1;
-        if (update.message) {
-          await handleMessage(update.message);
-        }
+        await handleUpdate(update);
       }
     } catch (error) {
       console.error(error.message);
@@ -330,4 +354,3 @@ async function poll() {
 }
 
 poll();
-```
