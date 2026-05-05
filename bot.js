@@ -1,9 +1,30 @@
+Бро, вот что вставлять в терминал из папки проекта:
+
+```bash
+npm install
+cp .env.example .env
+```
+
+Потом открой `.env` и вставь токен:
+
+```env
+TELEGRAM_BOT_TOKEN=твой_токен_от_BotFather
+MANAGER_USERNAME=@iosx_support_bot
+```
+
+Запуск/перезапуск бота:
+
+```bash
+npm start
+```
+
+Фулл код лежит тут: [src/bot.js](/Users/slivonchik/Documents/Codex/2026-05-05/new-chat-4/src/bot.js)
+
+```js
+import 'dotenv/config';
+
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const managerUsername = process.env.MANAGER_USERNAME || '@iosx_support_bot';
-const cryptoPaymentUrl = process.env.CRYPTO_PAYMENT_URL || '';
-const ozonPaymentText = process.env.OZON_PAYMENT_TEXT || '';
-const priceRub = 299;
-const starsAmount = Number.parseInt(process.env.TELEGRAM_STARS_AMOUNT || '150', 10);
 
 if (!token) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -16,11 +37,6 @@ const BUTTONS = {
   langRu: '🇷🇺 Русский',
   langEn: '🇬🇧 English',
   langZh: '🇨🇳 中文',
-  pay: '💳 Оплатить 299 ₽',
-  payStars: '⭐ Telegram Stars',
-  payCrypto: '🪙 Крипта',
-  payOzon: '🏦 СБП / Озон карта',
-  paid: '✅ Оплатил, начать проверку',
   profile: '👤 Профиль',
   help: '💬 Помощь',
   yes: 'Да',
@@ -55,20 +71,8 @@ function mainKeyboard() {
   return {
     resize_keyboard: true,
     keyboard: [
-      [BUTTONS.pay],
-      [BUTTONS.profile, BUTTONS.help],
-    ],
-  };
-}
-
-function paymentKeyboard() {
-  return {
-    resize_keyboard: true,
-    keyboard: [
-      [BUTTONS.payStars],
-      [BUTTONS.payCrypto, BUTTONS.payOzon],
-      [BUTTONS.paid],
-      [BUTTONS.menu],
+      [BUTTONS.help],
+      [BUTTONS.profile],
     ],
   };
 }
@@ -123,9 +127,8 @@ function mainMenu(chatId) {
       'IOSx',
       '',
       'Мы уже получили вашу заявку.',
-      'Следующий шаг — оплатить beta-тариф: 299 ₽.',
       '',
-      'Проверка перед сбросом будет сразу после оплаты.',
+      'Выберите нужный раздел в меню.',
     ].join('\n'),
     mainKeyboard()
   );
@@ -181,65 +184,6 @@ function finishChecklist(chatId) {
   );
 }
 
-function sendStarsInvoice(chatId) {
-  return telegram('sendInvoice', {
-    chat_id: chatId,
-    title: 'IOSx beta',
-    description: 'Настройка Android-устройства',
-    payload: `iosx-stars-${chatId}-${Date.now()}`,
-    provider_token: '',
-    currency: 'XTR',
-    prices: [{ label: 'IOSx beta', amount: starsAmount }],
-    start_parameter: 'iosx_beta',
-  });
-}
-
-function showPayment(chatId) {
-  return sendMessage(
-    chatId,
-    [
-      'Выберите способ оплаты',
-      '',
-      'Beta-тариф: 299 ₽',
-      `Telegram Stars: ${starsAmount} ⭐`,
-    ].join('\n'),
-    paymentKeyboard()
-  );
-}
-
-function showCryptoPayment(chatId) {
-  if (cryptoPaymentUrl) {
-    return sendMessage(chatId, 'Оплата криптой', {
-      inline_keyboard: [[{ text: 'Оплатить криптой', url: cryptoPaymentUrl }]],
-    });
-  }
-
-  return sendMessage(
-    chatId,
-    [
-      'Оплата криптой',
-      '',
-      'Ссылка на оплату криптой пока не подключена.',
-      `Напишите менеджеру: ${managerUsername}`,
-    ].join('\n'),
-    paymentKeyboard()
-  );
-}
-
-function showOzonPayment(chatId) {
-  return sendMessage(
-    chatId,
-    [
-      'Оплата по СБП / Озон карте',
-      '',
-      ozonPaymentText || `Для оплаты по СБП или на Озон карту напишите менеджеру: ${managerUsername}`,
-      '',
-      'После оплаты нажмите “✅ Оплатил, начать проверку”.',
-    ].join('\n'),
-    paymentKeyboard()
-  );
-}
-
 function showHelp(chatId) {
   return sendMessage(
     chatId,
@@ -255,58 +199,28 @@ function showHelp(chatId) {
       '3. Если я отвечу “Нет” в проверке?',
       'Мы останавливаем процесс. Сначала нужно сохранить данные, и только потом продолжать.',
       '',
-      '4. Зачем нужна оплата до проверки?',
-      'Оплата подтверждает заявку. После оплаты бот сразу запускает проверку перед сбросом.',
-      '',
-      '5. Что если я уже оплатил?',
-      'После оплаты Stars бот сам запустит проверку. После крипты, СБП или Озон карты нажмите “✅ Оплатил, начать проверку”.',
-      '',
-      '6. Нужно ли знать пароль от Google-аккаунта?',
+      '4. Нужно ли знать пароль от Google-аккаунта?',
       'Да. Если пароль не помните, сброс делать нельзя — сначала восстановите доступ.',
       '',
-      '7. Подходит ли сервис для моего Android?',
+      '5. Подходит ли сервис для моего Android?',
       'В большинстве случаев да. Если есть сомнения, напишите менеджеру и укажите модель телефона.',
       '',
-      '8. Сколько времени занимает настройка?',
+      '6. Сколько времени занимает настройка?',
       'Обычно быстро, но зависит от телефона, интернета и того, готовы ли резервные копии.',
       '',
-      '9. Что делать, если я боюсь потерять фото или чаты?',
+      '7. Что делать, если я боюсь потерять фото или чаты?',
       'Не делайте сброс. Пройдите проверку и остановитесь на пункте, где не уверены.',
       '',
-      '10. Можно связаться с человеком?',
+      '8. Можно связаться с человеком?',
       `Да. Менеджер: ${managerUsername}`,
     ].join('\n'),
     mainKeyboard()
   );
 }
 
-async function showPaidNextStep(chatId) {
-  await sendMessage(
-    chatId,
-    [
-      'Оплату отметили.',
-      '',
-      'Теперь пройдите проверку перед сбросом. Если хоть где-то ответ “Нет”, сброс не делаем — сначала сохраняем данные.',
-    ].join('\n')
-  );
-  await startChecklist(chatId);
-}
-
-function answerPreCheckoutQuery(preCheckoutQueryId) {
-  return telegram('answerPreCheckoutQuery', {
-    pre_checkout_query_id: preCheckoutQueryId,
-    ok: true,
-  });
-}
-
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const text = message.text || '';
-
-  if (message.successful_payment) {
-    await showPaidNextStep(chatId);
-    return;
-  }
 
   if (text === '/start') {
     await chooseLanguage(chatId);
@@ -348,31 +262,6 @@ async function handleMessage(message) {
     return;
   }
 
-  if (text === BUTTONS.pay) {
-    await showPayment(chatId);
-    return;
-  }
-
-  if (text === BUTTONS.payStars) {
-    await sendStarsInvoice(chatId);
-    return;
-  }
-
-  if (text === BUTTONS.payCrypto) {
-    await showCryptoPayment(chatId);
-    return;
-  }
-
-  if (text === BUTTONS.payOzon) {
-    await showOzonPayment(chatId);
-    return;
-  }
-
-  if (text === BUTTONS.paid) {
-    await showPaidNextStep(chatId);
-    return;
-  }
-
   if (text === BUTTONS.profile) {
     await sendMessage(chatId, `Ваш Telegram ID: ${chatId}`);
     return;
@@ -387,11 +276,6 @@ async function handleMessage(message) {
 }
 
 async function handleUpdate(update) {
-  if (update.pre_checkout_query) {
-    await answerPreCheckoutQuery(update.pre_checkout_query.id);
-    return;
-  }
-
   if (update.message) {
     await handleMessage(update.message);
   }
@@ -406,7 +290,7 @@ async function poll() {
       const updates = await telegram('getUpdates', {
         offset,
         timeout: 30,
-        allowed_updates: ['message', 'pre_checkout_query'],
+        allowed_updates: ['message'],
       });
 
       for (const update of updates) {
@@ -421,3 +305,4 @@ async function poll() {
 }
 
 poll();
+```
