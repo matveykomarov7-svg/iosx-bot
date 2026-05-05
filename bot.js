@@ -1,8 +1,9 @@
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const managerUsername = process.env.MANAGER_USERNAME || '@iosx_support_bot';
-const providerToken = process.env.TELEGRAM_PROVIDER_TOKEN || '';
+const cryptoPaymentUrl = process.env.CRYPTO_PAYMENT_URL || '';
+const ozonPaymentText = process.env.OZON_PAYMENT_TEXT || '';
 const priceRub = 299;
-const priceKopecks = priceRub * 100;
+const starsAmount = Number.parseInt(process.env.TELEGRAM_STARS_AMOUNT || '150', 10);
 
 if (!token) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -16,6 +17,10 @@ const BUTTONS = {
   langEn: '🇬🇧 English',
   langZh: '🇨🇳 中文',
   pay: '💳 Оплатить 299 ₽',
+  payStars: '⭐ Telegram Stars',
+  payCrypto: '🪙 Крипта',
+  payOzon: '🏦 СБП / Озон карта',
+  paid: '✅ Оплатил, начать проверку',
   profile: '👤 Профиль',
   help: '💬 Помощь',
   yes: 'Да',
@@ -52,6 +57,18 @@ function mainKeyboard() {
     keyboard: [
       [BUTTONS.pay],
       [BUTTONS.profile, BUTTONS.help],
+    ],
+  };
+}
+
+function paymentKeyboard() {
+  return {
+    resize_keyboard: true,
+    keyboard: [
+      [BUTTONS.payStars],
+      [BUTTONS.payCrypto, BUTTONS.payOzon],
+      [BUTTONS.paid],
+      [BUTTONS.menu],
     ],
   };
 }
@@ -164,32 +181,62 @@ function finishChecklist(chatId) {
   );
 }
 
-function sendInvoice(chatId) {
+function sendStarsInvoice(chatId) {
   return telegram('sendInvoice', {
     chat_id: chatId,
     title: 'IOSx beta',
     description: 'Настройка Android-устройства',
-    payload: `iosx-beta-${chatId}-${Date.now()}`,
-    provider_token: providerToken,
-    currency: 'RUB',
-    prices: [{ label: 'IOSx beta', amount: priceKopecks }],
+    payload: `iosx-stars-${chatId}-${Date.now()}`,
+    provider_token: '',
+    currency: 'XTR',
+    prices: [{ label: 'IOSx beta', amount: starsAmount }],
     start_parameter: 'iosx_beta',
   });
 }
 
 function showPayment(chatId) {
-  if (providerToken) {
-    return sendInvoice(chatId);
+  return sendMessage(
+    chatId,
+    [
+      'Выберите способ оплаты',
+      '',
+      'Beta-тариф: 299 ₽',
+      `Telegram Stars: ${starsAmount} ⭐`,
+    ].join('\n'),
+    paymentKeyboard()
+  );
+}
+
+function showCryptoPayment(chatId) {
+  if (cryptoPaymentUrl) {
+    return sendMessage(chatId, 'Оплата криптой', {
+      inline_keyboard: [[{ text: 'Оплатить криптой', url: cryptoPaymentUrl }]],
+    });
   }
 
   return sendMessage(
     chatId,
     [
-      'Beta-тариф: 299 ₽',
+      'Оплата криптой',
       '',
-      'Оплата в Telegram пока не подключена.',
-      `Для оплаты напишите менеджеру: ${managerUsername}`,
-    ].join('\n')
+      'Ссылка на оплату криптой пока не подключена.',
+      `Напишите менеджеру: ${managerUsername}`,
+    ].join('\n'),
+    paymentKeyboard()
+  );
+}
+
+function showOzonPayment(chatId) {
+  return sendMessage(
+    chatId,
+    [
+      'Оплата по СБП / Озон карте',
+      '',
+      ozonPaymentText || `Для оплаты по СБП или на Озон карту напишите менеджеру: ${managerUsername}`,
+      '',
+      'После оплаты нажмите “✅ Оплатил, начать проверку”.',
+    ].join('\n'),
+    paymentKeyboard()
   );
 }
 
@@ -212,7 +259,7 @@ function showHelp(chatId) {
       'Оплата подтверждает заявку. После оплаты бот сразу запускает проверку перед сбросом.',
       '',
       '5. Что если я уже оплатил?',
-      'После успешной оплаты бот сам запустит проверку. Если этого не произошло, напишите менеджеру.',
+      'После оплаты Stars бот сам запустит проверку. После крипты, СБП или Озон карты нажмите “✅ Оплатил, начать проверку”.',
       '',
       '6. Нужно ли знать пароль от Google-аккаунта?',
       'Да. Если пароль не помните, сброс делать нельзя — сначала восстановите доступ.',
@@ -303,6 +350,26 @@ async function handleMessage(message) {
 
   if (text === BUTTONS.pay) {
     await showPayment(chatId);
+    return;
+  }
+
+  if (text === BUTTONS.payStars) {
+    await sendStarsInvoice(chatId);
+    return;
+  }
+
+  if (text === BUTTONS.payCrypto) {
+    await showCryptoPayment(chatId);
+    return;
+  }
+
+  if (text === BUTTONS.payOzon) {
+    await showOzonPayment(chatId);
+    return;
+  }
+
+  if (text === BUTTONS.paid) {
+    await showPaidNextStep(chatId);
     return;
   }
 
