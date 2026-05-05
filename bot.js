@@ -1,25 +1,3 @@
-Бро, вот что вставлять в терминал из папки проекта:
-
-```bash
-npm install
-cp .env.example .env
-```
-
-Потом открой `.env` и вставь токен:
-
-```env
-TELEGRAM_BOT_TOKEN=твой_токен_от_BotFather
-MANAGER_USERNAME=@iosx_support_bot
-```
-
-Запуск/перезапуск бота:
-
-```bash
-npm start
-```
-
-Фулл код лежит тут: [src/bot.js](/Users/slivonchik/Documents/Codex/2026-05-05/new-chat-4/src/bot.js)
-
 ```js
 import 'dotenv/config';
 
