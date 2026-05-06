@@ -1,8 +1,33 @@
-```js
-import 'dotenv/config';
+import { existsSync, readFileSync } from 'node:fs';
+
+function loadEnv(path = '.env') {
+  if (!existsSync(path)) {
+    return;
+  }
+
+  const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    process.env[key] ||= value;
+  }
+}
+
+loadEnv();
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const managerUsername = process.env.MANAGER_USERNAME || '@iosx_support_bot';
+const requestsApiUrl = process.env.REQUESTS_API_URL || '';
 
 if (!token) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -10,11 +35,13 @@ if (!token) {
 
 const apiBase = `https://api.telegram.org/bot${token}`;
 const userState = new Map();
+const handledMessages = new Set();
 
 const BUTTONS = {
   langRu: '🇷🇺 Русский',
   langEn: '🇬🇧 English',
   langZh: '🇨🇳 中文',
+  pay: '💳 Перейти к оплате',
   profile: '👤 Профиль',
   help: '💬 Помощь',
   yes: 'Да',
@@ -49,6 +76,17 @@ function mainKeyboard() {
   return {
     resize_keyboard: true,
     keyboard: [
+      [BUTTONS.help],
+      [BUTTONS.profile],
+    ],
+  };
+}
+
+function requestKeyboard() {
+  return {
+    resize_keyboard: true,
+    keyboard: [
+      [BUTTONS.pay],
       [BUTTONS.help],
       [BUTTONS.profile],
     ],
@@ -97,6 +135,42 @@ function clearState(chatId) {
   userState.delete(chatId);
 }
 
+function getStartPayload(text) {
+  const match = text.match(/^\/start(?:\s+(.+))?$/);
+  return match ? match[1]?.trim() || '' : '';
+}
+
+function isRequestId(value) {
+  return /^IOSX-\d{5}$/i.test(value);
+}
+
+async function requestApi(action, payload) {
+  if (!requestsApiUrl) {
+    throw new Error('REQUESTS_API_URL is not configured');
+  }
+
+  const res = await fetch(requestsApiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action, ...payload }),
+  });
+
+  const data = await res.json();
+  if (data.status !== 'success') {
+    throw new Error(data.message || 'Requests API error');
+  }
+
+  return data;
+}
+
+async function loadRequest(requestId, user) {
+  return requestApi('getRequest', {
+    requestId,
+    telegramId: String(user.id),
+    telegramUsername: user.username || '',
+  });
+}
+
 function mainMenu(chatId) {
   clearState(chatId);
   return sendMessage(
@@ -110,6 +184,61 @@ function mainMenu(chatId) {
     ].join('\n'),
     mainKeyboard()
   );
+}
+
+async function showRequest(chatId, requestId, user) {
+  try {
+    const data = await loadRequest(requestId, user);
+    const request = data.request;
+
+    if (request.autoStatus === 'Просрочена') {
+      await sendMessage(
+        chatId,
+        [
+          'Срок действия заявки истек.',
+          '',
+          'Пожалуйста, создайте новую заявку на сайте.',
+        ].join('\n'),
+        mainKeyboard()
+      );
+      return;
+    }
+
+    setState(chatId, {
+      mode: 'request',
+      requestId,
+      request,
+    });
+
+    await sendMessage(
+      chatId,
+      [
+        `Заявка ${request.id} найдена`,
+        '',
+        `Устройство: ${request.device || 'не указано'}`,
+        `Процессор: ${request.processor || 'не указан'}`,
+        `Проблема: ${request.comment || 'не указана'}`,
+        '',
+        `Статус: ${request.status || 'Новая'}`,
+        `Оплата: ${request.paymentStatus || 'pending'}`,
+        `Осталось: ${request.timeLeft || 'до 2 часов'}`,
+        '',
+        'Чтобы продолжить, перейдите к оплате.',
+      ].join('\n'),
+      requestKeyboard()
+    );
+  } catch (error) {
+    await sendMessage(
+      chatId,
+      [
+        'Не смог найти заявку.',
+        '',
+        'Проверьте ссылку из сайта или создайте заявку заново.',
+        `Если нужна помощь — напишите менеджеру: ${managerUsername}`,
+      ].join('\n'),
+      mainKeyboard()
+    );
+  }
 }
 
 function chooseLanguage(chatId) {
@@ -199,6 +328,18 @@ function showHelp(chatId) {
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const text = message.text || '';
+  const messageKey = `${chatId}:${message.message_id}`;
+
+  if (handledMessages.has(messageKey)) {
+    return;
+  }
+  handledMessages.add(messageKey);
+
+  const startPayload = getStartPayload(text);
+  if (startPayload && isRequestId(startPayload)) {
+    await showRequest(chatId, startPayload.toUpperCase(), message.from || {});
+    return;
+  }
 
   if (text === '/start') {
     await chooseLanguage(chatId);
@@ -241,7 +382,51 @@ async function handleMessage(message) {
   }
 
   if (text === BUTTONS.profile) {
-    await sendMessage(chatId, `Ваш Telegram ID: ${chatId}`);
+    const requestState = userState.get(chatId);
+    if (requestState?.mode === 'request') {
+      await sendMessage(
+        chatId,
+        [
+          'Профиль IOSx',
+          '',
+          `Статус заявки: ${requestState.request?.status || 'получена'}`,
+          `Этап: ${requestState.request?.paymentStatus === 'paid' ? 'оплачена' : 'ожидает оплаты'}`,
+        ].join('\n'),
+        requestKeyboard()
+      );
+      return;
+    }
+
+    await sendMessage(
+      chatId,
+      [
+        'Профиль IOSx',
+        '',
+        'Статус заявки: получена',
+        'Этап: подготовка к настройке Android',
+      ].join('\n'),
+      mainKeyboard()
+    );
+    return;
+  }
+
+  if (text === BUTTONS.pay) {
+    const requestState = userState.get(chatId);
+    if (requestState?.mode === 'request') {
+      await sendMessage(
+        chatId,
+        [
+          `Оплата заявки ${requestState.requestId}`,
+          '',
+          'Платежный способ сейчас подключаем.',
+          `Для оплаты напишите менеджеру: ${managerUsername}`,
+        ].join('\n'),
+        requestKeyboard()
+      );
+      return;
+    }
+
+    await sendMessage(chatId, 'Сначала откройте заявку по ссылке с сайта.', mainKeyboard());
     return;
   }
 
@@ -260,7 +445,7 @@ async function handleUpdate(update) {
 }
 
 async function poll() {
-  let offset = 0;
+  let offset = await dropPendingUpdates();
   console.log('IOSx bot is running');
 
   while (true) {
@@ -282,5 +467,23 @@ async function poll() {
   }
 }
 
+async function dropPendingUpdates() {
+  let nextOffset = 0;
+
+  while (true) {
+    const updates = await telegram('getUpdates', {
+      offset: nextOffset,
+      timeout: 0,
+      limit: 100,
+      allowed_updates: ['message'],
+    });
+
+    if (updates.length === 0) {
+      return nextOffset;
+    }
+
+    nextOffset = updates.at(-1).update_id + 1;
+  }
+}
+
 poll();
-```
