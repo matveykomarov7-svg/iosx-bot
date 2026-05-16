@@ -28,6 +28,8 @@ loadEnv();
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const managerUsername = process.env.MANAGER_USERNAME || '@iosx_support_bot';
 const requestsApiUrl = process.env.REQUESTS_API_URL || '';
+const paymentAmountStars = Number(process.env.PAYMENT_AMOUNT_STARS || 299);
+const paymentCurrency = 'XTR';
 
 if (!token) {
   throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -127,6 +129,36 @@ function sendMessage(chatId, text, replyMarkup) {
   });
 }
 
+function sendPaymentInvoice(chatId, requestState) {
+  const amount = Math.max(1, Math.round(paymentAmountStars));
+  const payload = `iosx:${requestState.requestId}:${chatId}`;
+
+  return telegram('sendInvoice', {
+    chat_id: chatId,
+    title: `IOSx ${requestState.requestId}`,
+    description: 'Настройка Android-устройства и проверка перед продолжением.',
+    payload,
+    provider_token: '',
+    currency: paymentCurrency,
+    prices: [
+      {
+        label: 'IOSx Android setup',
+        amount,
+      },
+    ],
+    start_parameter: requestState.requestId,
+    protect_content: true,
+  });
+}
+
+function answerPreCheckoutQuery(id, ok, errorMessage) {
+  return telegram('answerPreCheckoutQuery', {
+    pre_checkout_query_id: id,
+    ok,
+    error_message: errorMessage,
+  });
+}
+
 function setState(chatId, state) {
   userState.set(chatId, state);
 }
@@ -168,6 +200,19 @@ async function loadRequest(requestId, user) {
     requestId,
     telegramId: String(user.id),
     telegramUsername: user.username || '',
+  });
+}
+
+async function markRequestPaid(requestId, user, payment) {
+  return requestApi('markPayment', {
+    requestId,
+    telegramId: String(user.id),
+    telegramUsername: user.username || '',
+    paymentStatus: 'paid',
+    invoiceId: payment.telegram_payment_charge_id || payment.provider_payment_charge_id || '',
+    paidAt: new Date().toISOString(),
+    totalAmount: payment.total_amount,
+    currency: payment.currency,
   });
 }
 
@@ -335,6 +380,32 @@ async function handleMessage(message) {
   }
   handledMessages.add(messageKey);
 
+  if (message.successful_payment) {
+    const payloadParts = String(message.successful_payment.invoice_payload || '').split(':');
+    const requestId = payloadParts[1] || '';
+
+    if (isRequestId(requestId)) {
+      try {
+        await markRequestPaid(requestId.toUpperCase(), message.from || {}, message.successful_payment);
+      } catch (error) {
+        console.error(error.message);
+      }
+    }
+
+    await sendMessage(
+      chatId,
+      [
+        'Оплата прошла успешно.',
+        '',
+        requestId ? `Заявка: ${requestId.toUpperCase()}` : 'Заявка оплачена.',
+        'Теперь пройдите короткую проверку перед продолжением.',
+      ].join('\n'),
+      mainKeyboard()
+    );
+    await startChecklist(chatId);
+    return;
+  }
+
   const startPayload = getStartPayload(text);
   if (startPayload && isRequestId(startPayload)) {
     await showRequest(chatId, startPayload.toUpperCase(), message.from || {});
@@ -413,16 +484,7 @@ async function handleMessage(message) {
   if (text === BUTTONS.pay) {
     const requestState = userState.get(chatId);
     if (requestState?.mode === 'request') {
-      await sendMessage(
-        chatId,
-        [
-          `Оплата заявки ${requestState.requestId}`,
-          '',
-          'Платежный способ сейчас подключаем.',
-          `Для оплаты напишите менеджеру: ${managerUsername}`,
-        ].join('\n'),
-        requestKeyboard()
-      );
+      await sendPaymentInvoice(chatId, requestState);
       return;
     }
 
@@ -439,6 +501,20 @@ async function handleMessage(message) {
 }
 
 async function handleUpdate(update) {
+  if (update.pre_checkout_query) {
+    const query = update.pre_checkout_query;
+    const payloadParts = String(query.invoice_payload || '').split(':');
+    const requestId = payloadParts[1] || '';
+
+    if (payloadParts[0] !== 'iosx' || !isRequestId(requestId)) {
+      await answerPreCheckoutQuery(query.id, false, 'Заявка не найдена. Создайте новую заявку на сайте.');
+      return;
+    }
+
+    await answerPreCheckoutQuery(query.id, true);
+    return;
+  }
+
   if (update.message) {
     await handleMessage(update.message);
   }
@@ -453,7 +529,7 @@ async function poll() {
       const updates = await telegram('getUpdates', {
         offset,
         timeout: 30,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'pre_checkout_query'],
       });
 
       for (const update of updates) {
@@ -475,7 +551,7 @@ async function dropPendingUpdates() {
       offset: nextOffset,
       timeout: 0,
       limit: 100,
-      allowed_updates: ['message'],
+      allowed_updates: ['message', 'pre_checkout_query'],
     });
 
     if (updates.length === 0) {
